@@ -28,3 +28,4 @@ model
 *.onnx
 *.csv
 *.png
+waifu-tagger

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
-use image::{DynamicImage, GenericImageView};
+use clap::Parser;
+use image::DynamicImage;
 use reqwest;
 use std::collections::HashMap;
 use std::fs;
@@ -7,10 +8,6 @@ use std::path::PathBuf;
 use tract_ndarray as ndarray;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_hir::internal::DimLike;
-
-const MODEL_REPO: &str = "SmilingWolf/wd-swinv2-tagger-v3";
-const MODEL_FILENAME: &str = "model.onnx";
-const LABELS_FILENAME: &str = "selected_tags.csv";
 
 async fn download_file(repo: &str, filename: &str, output_path: &PathBuf) -> Result<()> {
     let url = format!("https://huggingface.co/{}/resolve/main/{}", repo, filename);
@@ -118,23 +115,6 @@ impl Tagger {
         })
     }
 
-    pub async fn download_model() -> Result<Self> {
-        let model_path = PathBuf::from(MODEL_FILENAME);
-        let labels_path = PathBuf::from(LABELS_FILENAME);
-
-        if !model_path.exists() {
-            println!("Downloading model...");
-            download_file(MODEL_REPO, MODEL_FILENAME, &model_path).await?;
-        }
-
-        if !labels_path.exists() {
-            println!("Downloading labels...");
-            download_file(MODEL_REPO, LABELS_FILENAME, &labels_path).await?;
-        }
-
-        Self::new(model_path, labels_path)
-    }
-
     pub fn prepare_image(&self, image: DynamicImage) -> Result<Tensor> {
         let target_size = self.model_target_size;
 
@@ -226,18 +206,49 @@ impl Tagger {
     }
 }
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long)]
+    image: String,
+
+    #[arg(short = 'r', long)]
+    model_repo: String,
+
+    #[arg(short = 'm', long)]
+    model_file: String,
+
+    #[arg(short = 't', long)]
+    tags_file: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("Initializing tagger...");
-    let tagger = Tagger::download_model().await?;
+    let args = Args::parse();
 
-    let image_path = "test.png";
-    if !std::path::Path::new(image_path).exists() {
-        return Err(anyhow!("Test image not found: {}", image_path));
+    println!("Initializing tagger...");
+    let model_path = PathBuf::from(&args.model_file);
+    let labels_path = PathBuf::from(&args.tags_file);
+
+    let tagger = if !model_path.exists() || !labels_path.exists() {
+        println!("Downloading model files...");
+        if !model_path.exists() {
+            download_file(&args.model_repo, &args.model_file, &model_path).await?;
+        }
+        if !labels_path.exists() {
+            download_file(&args.model_repo, "selected_tags.csv", &labels_path).await?;
+        }
+        Tagger::new(model_path, labels_path)?
+    } else {
+        Tagger::new(model_path, labels_path)?
+    };
+
+    if !std::path::Path::new(&args.image).exists() {
+        return Err(anyhow!("Image not found: {}", args.image));
     }
 
     println!("Processing image...");
-    let image = image::open(image_path)?;
+    let image = image::open(&args.image)?;
     let (general_tags, character_tags, rating_tags) = tagger.predict(image, 0.35, 0.85)?;
 
     println!("\nRatings:");
