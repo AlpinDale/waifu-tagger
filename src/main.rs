@@ -5,6 +5,7 @@ use reqwest;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::time::Instant;
 use tract_ndarray as ndarray;
 use tract_onnx::prelude::*;
 use tract_onnx::tract_hir::internal::DimLike;
@@ -47,10 +48,12 @@ struct Tagger {
 
 impl Tagger {
     pub fn new(model_path: PathBuf, labels_path: PathBuf) -> Result<Self> {
+        let start = Instant::now();
         let model = tract_onnx::onnx()
             .model_for_path(&model_path)?
             .into_optimized()?
             .into_runnable()?;
+        println!("Model loading took: {:?}", start.elapsed());
 
         println!("Model loaded. Input facts:");
         let input_fact = model.model().input_fact(0)?;
@@ -67,6 +70,7 @@ impl Tagger {
         println!("Target size: {}", model_target_size);
 
         println!("Loading labels from {:?}", labels_path);
+        let labels_start = Instant::now();
         let mut reader = csv::Reader::from_path(labels_path)?;
         let mut tag_names = Vec::new();
         let mut rating_indexes = Vec::new();
@@ -89,8 +93,6 @@ impl Tagger {
                 .ok_or_else(|| anyhow!("Missing category column"))?
                 .parse()?;
 
-            // println!("Loaded tag: id={}, name={}, category={}", tag_id, name, category);
-
             tag_names.push(name);
             id_to_index.insert(tag_id, idx);
 
@@ -102,8 +104,9 @@ impl Tagger {
             }
         }
 
-        // println!("Loaded {} tags", tag_names.len());
-        // println!("First few tags: {:?}", &tag_names[..5]);
+        println!("Loaded {} tags", tag_names.len());
+
+        println!("Labels loading took: {:?}", labels_start.elapsed());
 
         Ok(Self {
             model,
@@ -116,6 +119,7 @@ impl Tagger {
     }
 
     pub fn prepare_image(&self, image: DynamicImage) -> Result<Tensor> {
+        let start = Instant::now();
         let target_size = self.model_target_size;
 
         let image = image.to_rgb8();
@@ -151,6 +155,7 @@ impl Tagger {
                 pixel[c] as f32
             });
 
+        println!("Image preparation took: {:?}", start.elapsed());
         Ok(array.into())
     }
 
@@ -164,8 +169,15 @@ impl Tagger {
         Vec<TagWithConfidence>,
         Vec<TagWithConfidence>,
     )> {
+        let prep_start = Instant::now();
         let input = self.prepare_image(image)?;
+        println!("Image preparation took: {:?}", prep_start.elapsed());
+
+        let inference_start = Instant::now();
         let result = self.model.run(tvec!(input.into()))?;
+        println!("Model inference took: {:?}", inference_start.elapsed());
+
+        let postprocess_start = Instant::now();
         let output = result[0].to_array_view::<f32>()?;
         let predictions = output.as_slice().unwrap();
 
@@ -202,6 +214,7 @@ impl Tagger {
         general_tags.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
         character_tags.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap());
 
+        println!("Post-processing took: {:?}", postprocess_start.elapsed());
         Ok((general_tags, character_tags, rating_tags))
     }
 }
@@ -224,6 +237,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let total_start = Instant::now();
     let args = Args::parse();
 
     println!("Initializing tagger...");
@@ -248,8 +262,10 @@ async fn main() -> Result<()> {
     }
 
     println!("Processing image...");
+    let process_start = Instant::now();
     let image = image::open(&args.image)?;
     let (general_tags, character_tags, rating_tags) = tagger.predict(image, 0.35, 0.85)?;
+    println!("Total processing time: {:?}", process_start.elapsed());
 
     println!("\nRatings:");
     for tag in rating_tags {
@@ -266,5 +282,6 @@ async fn main() -> Result<()> {
         println!("{}: {:.1}%", tag.name, tag.confidence * 100.0);
     }
 
+    println!("\nTotal execution time: {:?}", total_start.elapsed());
     Ok(())
 }

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tract-onnx = "0.21.9"
+ort = { version = "1.16.3", features = ["load-dynamic"] }
 anyhow = "1.0"
 image = "0.24"
 ndarray = "0.15"
@@ -12,6 +12,8 @@ csv = "1.2"
 reqwest = { version = "0.11", features = ["blocking"] }
 tokio = { version = "1.0", features = ["full"] }
 clap = { version = "4.4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [profile.release]
 opt-level = 3
