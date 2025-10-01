@@ -1,0 +1,9 @@
+fastapi
+huggingface_hub
+numpy
+pandas
+pydantic
+pydantic_settings
+timm
+torch
+uvicorn
